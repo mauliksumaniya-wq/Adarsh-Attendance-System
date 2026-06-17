@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>College QR Attendance</title>
+    <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
+    <style>
+        :root { --primary: #00c6ff; --bg: #121212; --card: #1e1e1e; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: white; text-align: center; margin: 0; padding: 15px; }
+        .card { background: var(--card); padding: 20px; border-radius: 20px; max-width: 500px; margin: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        input, select, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 10px; border: none; font-size: 16px; box-sizing: border-box; }
+        button { background: var(--primary); color: white; font-weight: bold; cursor: pointer; }
+        .btn-back { background: #444; }
+        .hidden { display: none !important; }
+        .qr-box { background: white; padding: 10px; width: 150px; height: 150px; margin: 15px auto; border-radius: 12px; }
+        
+        /* Dashboard History List */
+        .session-item { background: #252525; padding: 15px; border-radius: 12px; margin-top: 10px; text-align: left; border-left: 5px solid var(--primary); }
+        .stat-line { display: flex; justify-content: space-between; margin-top: 10px; font-size: 14px; }
+        .present-count { color: #00ffcc; font-weight: bold; }
+        .absent-link { color: #ff4b2b; font-weight: bold; text-decoration: underline; cursor: pointer; }
+
+        /* FIXED MODAL CSS */
+        #absentModal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; justify-content: center; align-items: center; z-index: 9999; }
+        .modal-box { background: #1e1e1e; padding: 25px; border-radius: 15px; width: 85%; max-width: 400px; max-height: 70vh; overflow-y: auto; box-shadow: 0 0 20px rgba(0,0,0,0.5); border: 1px solid #333; }
+        .modal-box h3 { color: #ff4b2b; margin-top: 0; }
+        .names-container { text-align: left; line-height: 1.8; color: #ccc; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2 id="appTitle">Attendance System</h2>
+
+    <!-- VIEW SELECTION -->
+    <div id="mainView">
+        <button onclick="showView('loginView')">Teacher Login</button>
+        <button onclick="showView('studentView')">Student Portal</button>
+    </div>
+
+    <!-- TEACHER LOGIN -->
+    <div id="loginView" class="hidden">
+        <h3>Admin Access</h3>
+        <input type="password" id="adminPass" placeholder="Password">
+        <button onclick="checkAdmin()">Login</button>
+        <button class="btn-back" onclick="showView('mainView')">? Back</button>
+    </div>
+
+    <!-- TEACHER DASHBOARD -->
+    <div id="teacherView" class="hidden">
+        <h3>Live Session</h3>
+        <button onclick="hCreateSession()">1. Generate Session ID</button>
+        <div id="sQR" class="qr-box hidden"></div>
+        <div id="sDisplay" style="color:var(--primary); font-weight:bold; margin: 10px 0;"></div>
+
+        <button onclick="hCreateCode()">2. Generate Code</button>
+        <div id="cQR" class="qr-box hidden"></div>
+        <div id="cDisplay" style="color:#00ffcc; font-weight:bold; margin: 10px 0;"></div>
+
+        <hr style="border: 0.5px solid #333; margin: 20px 0;">
+        <h3>Attendance History</h3>
+        <button onclick="loadDashboard()" style="background:#28a745">?? Refresh List</button>
+        <div id="historyList">Loading history...</div>
+        
+        <button class="btn-back" onclick="showView('mainView')" style="margin-top:30px">Logout</button>
+    </div>
+
+    <!-- STUDENT PORTAL -->
+    <div id="studentView" class="hidden">
+        <div id="sVerify">
+            <input id="isid" placeholder="Session ID">
+            <input id="icode" placeholder="Verify Code">
+            <button onclick="verifyStudent()">Verify Access</button>
+        </div>
+        <div id="sMark" class="hidden">
+            <select id="studSelect"></select>
+            <button id="pBtn" onclick="markAttendance()">Submit Attendance</button>
+        </div>
+        <div id="status" style="margin-top:15px; font-size:14px; color:var(--primary);">Ready</div>
+        <button class="btn-back" onclick="showView('mainView')">? Back</button>
+    </div>
+</div>
+
+<!-- ABSENT MODAL -->
+<div id="absentModal">
+    <div class="modal-box">
+        <h3>Absent Students</h3>
+        <div id="namesList" class="names-container"></div>
+        <button onclick="closeModal()" style="background:#ff4b2b">Close</button>
+    </div>
+</div>
+
+<script>
+    const SURL = "https://script.google.com/macros/s/AKfycbz3IDRkzSMtspbQTnXMkDnitaJkdtGjRyzYHSqR-4Tc3jNc7s-NgVrMGc2pU7OBBrQdhw/exec"; // REPLACE THIS
+    let activeSid = "";
+    let dashboardData = [];
+    let students = [];
+
+    function showView(id) {
+        document.getElementById('mainView').classList.add('hidden');
+        document.getElementById('loginView').classList.add('hidden');
+        document.getElementById('teacherView').classList.add('hidden');
+        document.getElementById('studentView').classList.add('hidden');
+        document.getElementById(id).classList.remove('hidden');
+        if(id === 'teacherView') loadDashboard();
+    }
+
+    function checkAdmin() {
+        if(document.getElementById('adminPass').value === "admin123") showView('teacherView');
+        else alert("Wrong Password");
+    }
+
+    // --- TEACHER Dashboard Logic ---
+    async function hCreateSession() {
+        activeSid = "SESS-" + Math.floor(100000 + Math.random()*900000);
+        document.getElementById('sQR').innerHTML = ""; 
+        document.getElementById('sQR').classList.remove('hidden');
+        new QRCode(document.getElementById('sQR'), { text: activeSid, width: 150, height: 150 });
+        document.getElementById('sDisplay').innerText = activeSid;
+        await fetch(SURL, { method: "POST", body: JSON.stringify({type:"createSession", session: activeSid}) });
+        loadDashboard();
+    }
+
+    async function hCreateCode() {
+        if(!activeSid) return alert("Create Session ID First");
+        let code = Math.floor(1000 + Math.random()*8999).toString();
+        document.getElementById('cQR').innerHTML = ""; 
+        document.getElementById('cQR').classList.remove('hidden');
+        new QRCode(document.getElementById('cQR'), { text: code, width: 150, height: 150 });
+        document.getElementById('cDisplay').innerText = "CODE: " + code;
+        await fetch(SURL, { method: "POST", body: JSON.stringify({type:"updateCode", session: activeSid, code: code}) });
+        loadDashboard();
+    }
+
+    async function loadDashboard() {
+        const history = document.getElementById('historyList');
+        try {
+            const res = await fetch(`${SURL}?action=getDashboard&t=${Date.now()}`);
+            dashboardData = await res.json();
+            if(dashboardData.length === 0) { history.innerText = "No sessions created yet."; return; }
+
+            history.innerHTML = dashboardData.map((item, index) => `
+                <div class="session-item">
+                    <small style="color:#777">${new Date(item.date).toLocaleString()}</small>
+                    <div style="font-weight:bold; margin-top:5px;">ID: ${item.sid} | Code: ${item.code}</div>
+                    <div class="stat-line">
+                        <span class="present-count">Present: ${item.presentCount}</span>
+                        <span class="absent-link" onclick="openAbsents(${index})">Absent: ${item.absentCount} (View)</span>
+                    </div>
+                </div>
+            `).join('');
+        } catch(e) { history.innerText = "Error loading history."; }
+    }
+
+    function openAbsents(idx) {
+        const names = dashboardData[idx].absentNames;
+        document.getElementById('namesList').innerHTML = names.length > 0 ? names.map(n => "• " + n).join("<br>") : "Everyone is present!";
+        document.getElementById('absentModal').style.display = 'flex';
+    }
+
+    function closeModal() {
+        document.getElementById('absentModal').style.display = 'none';
+    }
+
+    // --- STUDENT Logic ---
+    async function verifyStudent() {
+        const sid = document.getElementById('isid').value.trim();
+        const code = document.getElementById('icode').value.trim();
+        const status = document.getElementById('status');
+        if(!sid || !code) return alert("Fill all fields");
+
+        status.innerText = "Verifying...";
+        const res = await fetch(`${SURL}?action=getSessions`);
+        const sessions = await res.json();
+        const match = sessions.find(x => x.session === sid && x.code === code);
+
+        if(match) {
+            status.innerText = "Loading student list...";
+            const sRes = await fetch(`${SURL}?action=getStudents`);
+            students = await sRes.json();
+            document.getElementById('sVerify').classList.add('hidden');
+            document.getElementById('sMark').classList.remove('hidden');
+            document.getElementById('studSelect').innerHTML = students.map((s,i) => `<option value="${i}">${s.name} (Roll: ${s.roll})</option>`).join('');
+            status.innerText = "Select your name and mark present.";
+        } else { status.innerText = "? Invalid Codes."; }
+    }
+
+    async function markAttendance() {
+        const btn = document.getElementById('pBtn');
+        const student = students[document.getElementById('studSelect').value];
+        const sid = document.getElementById('isid').value.trim();
+        btn.disabled = true;
+        document.getElementById('status').innerText = "Saving...";
+
+        await fetch(SURL, { method: "POST", body: JSON.stringify({
+            type: "markPresent", session: sid,
+            name: student.name, class: student.class, roll: student.roll
+        })});
+        document.getElementById('status').innerText = "? Attendance Marked!";
+        document.getElementById('sMark').innerHTML = "<h3>Thank you, " + student.name + "</h3>";
+    }
+</script>
+</body>
+</html>
